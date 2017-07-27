@@ -4,7 +4,7 @@ program io_bug
   implicit none
 
   character(len=*), parameter :: fname='output.h5'
-  integer, parameter :: nq=9, ng=60000
+  integer, parameter :: n2=9, n1=60000, num_dsets=4
   !integer, parameter :: nq=15, ng=60000
   !integer, parameter :: nq=15, ng=150000
   integer, parameter :: DP=kind(1d0)
@@ -23,20 +23,20 @@ contains
 
 subroutine prepare_file()
   integer(HID_T) :: file_id
-  integer :: error
+  integer :: ii, errcode
+  character(len=9) dset_name
 
+  print *, 'Creating file ', fname
   call h5fcreate_f(fname, H5F_ACC_TRUNC_F, file_id, errcode)
   call check_hdf5_error(errcode)
 
-  call hdf5_create_group(file_id, 'eps_header')
-  call hdf5_create_group(file_id, 'eps_header/gspace')
+  do ii = 1, num_dsets
+    write(dset_name, ('(a,i0.4)')) 'dset_', ii
+    print *, 'Creating dataset ', dset_name
+    call hdf5_create_dset(file_id, dset_name, H5T_NATIVE_INTEGER, (/n1,n2/))
+  enddo
 
-  call hdf5_create_dset(file_id, 'eps_header/gspace/dset1', H5T_NATIVE_INTEGER, (/ng,nq/))
-  call hdf5_create_dset(file_id, 'eps_header/gspace/dset2', H5T_NATIVE_INTEGER, (/ng,nq/))
-  call hdf5_create_dset(file_id, 'eps_header/gspace/dset3', H5T_NATIVE_INTEGER, (/ng,nq/))
-  call hdf5_create_dset(file_id, 'eps_header/gspace/dset4', H5T_NATIVE_INTEGER, (/ng,nq/))
-
-  call h5fclose_f(file_id, error)
+  call h5fclose_f(file_id, errcode)
   call check_hdf5_error(errcode)
 
 end subroutine prepare_file
@@ -46,26 +46,22 @@ end subroutine prepare_file
 subroutine write_file()
   integer(HID_T) :: file_id
   integer :: errcode, countf(2), offsetf(2)
+  character(len=9) dset_name
+  integer :: ii, buf(n1)
 
-  integer :: ind(ng)
-  real(DP) :: ekin(ng)
-
+  print *, 'Opening file ', fname
   call h5fopen_f(fname, H5F_ACC_RDWR_F, file_id, errcode)
   call check_hdf5_error(errcode)
 
-  countf(:) = (/ng, 1/)
+  countf(:) = (/n1, 1/)
   offsetf(:) = (/0, 0/)
-  ind(:) = 0
-  ekin(:) = 0d0
+  buf(:) = 0
 
-  call hdf5_write_int_hyperslab(file_id, 'eps_header/gspace/dset1', &
-    countf, offsetf, ind)
-  call hdf5_write_int_hyperslab(file_id, 'eps_header/gspace/dset2', &
-    countf, offsetf, ind)
-  call hdf5_write_int_hyperslab(file_id, 'eps_header/gspace/dset3', &
-    countf, offsetf, ind)
-  call hdf5_write_int_hyperslab(file_id, 'eps_header/gspace/dset4', &
-    countf, offsetf, ind)
+  do ii = 1, num_dsets
+    write(dset_name, ('(a,i0.4)')) 'dset_', ii
+    print *, 'Writing dataset ', dset_name
+    call hdf5_write_int_hyperslab(file_id, dset_name, countf, offsetf, buf)
+  enddo
 
 end subroutine write_file
 
@@ -91,7 +87,7 @@ subroutine hdf5_write_int_hyperslab(loc_id, dset_name, countf, offsetf, buf)
   integer(HID_T) :: dset_id
   integer(HID_T) :: dataspace
   integer(HID_T) :: memspace
-  
+
   call h5dopen_f(loc_id, dset_name, dset_id, errcode)
   call check_hdf5_error(errcode)
 
@@ -126,7 +122,7 @@ subroutine hdf5_create_dset(loc_id, dset_name, dtype, dims)
   character(LEN=*), intent(in) :: dset_name !< HDF5 dataset name
   integer(HID_T), intent(in) :: dtype
   integer, intent(in) :: dims(:)
-  
+
   integer(HSIZE_T) :: hdims(size(dims))
   integer(HID_T) :: dset_id
   integer(HID_T) :: dspace
@@ -160,22 +156,6 @@ subroutine hdf5_create_dset(loc_id, dset_name, dtype, dims)
   call check_hdf5_error(errcode)
 
 end subroutine hdf5_create_dset
-
-
-!> Creates an empty group
-subroutine hdf5_create_group(loc_id, group_name)
-  integer(HID_T), intent(in) :: loc_id !< HDF5 file id
-  character(LEN=*), intent(in) :: group_name !< HDF5 group name
-  
-  integer(HID_T) :: group_id
-  integer :: errcode
-
-  call h5gcreate_f(loc_id, group_name, group_id, errcode)
-  call check_hdf5_error(errcode)
-  call h5gclose_f(group_id, errcode)
-  call check_hdf5_error(errcode)
-  
-end subroutine hdf5_create_group
 
 
 ! Make sure error code is non-zero
