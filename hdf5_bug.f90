@@ -1,14 +1,22 @@
-program io_bug
+program hdf5_bug
 
   use hdf5
   implicit none
 
   character(len=*), parameter :: fname='output.h5'
-  integer, parameter :: n2=9, n1=60000, num_dsets=4
-  !integer, parameter :: nq=15, ng=60000
-  !integer, parameter :: nq=15, ng=150000
+  !integer, parameter :: dset_size=4000000, num_dsets=1
   integer, parameter :: DP=kind(1d0)
+  character(len=16) :: arg
+  integer :: dset_size, num_dsets
   integer :: errcode
+
+  call get_command_argument(1, arg)
+  read(arg,*) dset_size
+  call get_command_argument(2, arg)
+  read(arg,*) num_dsets
+
+  print *, 'dset_size = ', dset_size
+  print *, 'num_dsets = ', num_dsets
 
   call h5open_f(errcode)
   call check_hdf5_error(errcode)
@@ -33,7 +41,7 @@ subroutine prepare_file()
   do ii = 1, num_dsets
     write(dset_name, ('(a,i0.4)')) 'dset_', ii
     print *, 'Creating dataset ', dset_name
-    call hdf5_create_dset(file_id, dset_name, H5T_NATIVE_INTEGER, (/n1,n2/))
+    call hdf5_create_dset(file_id, dset_name, H5T_NATIVE_INTEGER, (/dset_size/))
   enddo
 
   call h5fclose_f(file_id, errcode)
@@ -45,22 +53,19 @@ end subroutine prepare_file
 ! Write stuff to file. This will cause the file to become corrupt.
 subroutine write_file()
   integer(HID_T) :: file_id
-  integer :: errcode, countf(2), offsetf(2)
+  integer :: errcode
   character(len=9) dset_name
-  integer :: ii, buf(n1)
+  integer :: ii, buf(dset_size)
 
   print *, 'Opening file ', fname
   call h5fopen_f(fname, H5F_ACC_RDWR_F, file_id, errcode)
   call check_hdf5_error(errcode)
 
-  countf(:) = (/n1, 1/)
-  offsetf(:) = (/0, 0/)
   buf(:) = 0
-
   do ii = 1, num_dsets
     write(dset_name, ('(a,i0.4)')) 'dset_', ii
     print *, 'Writing dataset ', dset_name
-    call hdf5_write_int_hyperslab(file_id, dset_name, countf, offsetf, buf)
+    call hdf5_write_int_hyperslab(file_id, dset_name, buf)
   enddo
 
 end subroutine write_file
@@ -70,20 +75,15 @@ end subroutine write_file
 ! Auxiliary routines
 !==============================================================================
 
-subroutine hdf5_write_int_hyperslab(loc_id, dset_name, countf, offsetf, buf)
+subroutine hdf5_write_int_hyperslab(loc_id, dset_name, buf)
   integer(HID_T), intent(in) :: loc_id !< HDF5 file id
   character(LEN=*), intent(in) :: dset_name !< HDF5 dataset name
-  !> Number of elements to read from the dataset for each dimention
-  integer, intent(in) :: countf(:)
-  !> Offset when reading dataset from file.
-  integer, intent(in) :: offsetf(:)
-  !> Data buffer. We treat it as a flat contiguous 1D array.
-  integer, intent(in), dimension(*) :: buf
+  integer, intent(in), dimension(dset_size) :: buf
 
   integer :: errcode
-  integer(HSIZE_T) :: hcountf(size(countf)) !< Count for file dataspace
+  integer(HSIZE_T) :: hcountf(1) !< Count for file dataspace
   integer(HSIZE_T) :: hcountm(1) !< Count for memory dataspace
-  integer(HSIZE_T) :: hoffsetf(size(offsetf)) !< Offset for file dataspace
+  integer(HSIZE_T) :: hoffsetf(1) !< Offset for file dataspace
   integer(HID_T) :: dset_id
   integer(HID_T) :: dataspace
   integer(HID_T) :: memspace
@@ -94,12 +94,12 @@ subroutine hdf5_write_int_hyperslab(loc_id, dset_name, countf, offsetf, buf)
   ! FHJ: Get 2D file dataspace and set selection mask
   call h5dget_space_f(dset_id, dataspace, errcode)
   call check_hdf5_error(errcode)
-  hcountf(:) = countf(:)
-  hoffsetf(:) = offsetf(:)
+  hcountf(:) = dset_size
+  hoffsetf(:) = 0
   call h5sselect_hyperslab_f(dataspace, H5S_SELECT_SET_F, hoffsetf, hcountf, errcode)
   call check_hdf5_error(errcode)
   ! FHJ: Create flat memory dataspace
-  hcountm(1) = product(countf)
+  hcountm(1) = dset_size
   call h5screate_simple_f(1, hcountm, memspace, errcode)
   call check_hdf5_error(errcode)
 
@@ -130,26 +130,18 @@ subroutine hdf5_create_dset(loc_id, dset_name, dtype, dims)
   integer :: errcode
 
   hdims(:) = dims(:)
-  !if (.false.) then
-  if (.true.) then
-    call h5pcreate_f(H5P_DATASET_CREATE_F, plist_id, errcode)
-    call check_hdf5_error(errcode)
-    ! FHJ: The following file causes corrupted files on the Burst Buffer
-    call h5pset_alloc_time_f(plist_id, H5D_ALLOC_TIME_EARLY_F, errcode)
-    !call h5pset_layout_f(plist_id, H5D_CONTIGUOUS_F, errcode)
-    call check_hdf5_error(errcode)
-    call h5screate_simple_f(size(dims), hdims, dspace, errcode)
-    call check_hdf5_error(errcode)
-    call h5dcreate_f(loc_id, dset_name, dtype, dspace, dset_id, errcode, dcpl_id=plist_id)
-    call check_hdf5_error(errcode)
-    call h5pclose_f(plist_id, errcode)
-    call check_hdf5_error(errcode)
-  else
-    call h5screate_simple_f(size(dims), hdims, dspace, errcode)
-    call check_hdf5_error(errcode)
-    call h5dcreate_f(loc_id, dset_name, dtype, dspace, dset_id, errcode)
-    call check_hdf5_error(errcode)
-  endif
+  call h5pcreate_f(H5P_DATASET_CREATE_F, plist_id, errcode)
+  call check_hdf5_error(errcode)
+  ! FHJ: The following file causes corrupted files on the Burst Buffer
+  call h5pset_alloc_time_f(plist_id, H5D_ALLOC_TIME_EARLY_F, errcode)
+  !call h5pset_layout_f(plist_id, H5D_CONTIGUOUS_F, errcode)
+  call check_hdf5_error(errcode)
+  call h5screate_simple_f(size(dims), hdims, dspace, errcode)
+  call check_hdf5_error(errcode)
+  call h5dcreate_f(loc_id, dset_name, dtype, dspace, dset_id, errcode, dcpl_id=plist_id)
+  call check_hdf5_error(errcode)
+  call h5pclose_f(plist_id, errcode)
+  call check_hdf5_error(errcode)
   call h5dclose_f(dset_id, errcode)
   call check_hdf5_error(errcode)
   call h5sclose_f(dspace, errcode)
@@ -164,9 +156,9 @@ subroutine check_hdf5_error(errcode)
 
   if (errcode/=0) then
     write(6,*) 'HDF5 error:', errcode
-    stop
+    stop 1
   endif
 
 end subroutine check_hdf5_error
 
-end program io_bug
+end program hdf5_bug
